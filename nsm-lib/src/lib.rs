@@ -11,6 +11,85 @@ use nsm_driver::{nsm_get_raw_from_vec, nsm_get_vec_from_raw};
 use nsm_io::{Digest, ErrorCode, Request, Response};
 use serde_bytes::ByteBuf;
 use std::cmp;
+use std::ptr;
+
+use cpython::{PyResult, Python, py_module_initializer, py_fn, PyBytes};
+
+py_module_initializer!(libnsm, |py, m| {
+    m.add(py, "__doc__", "This module is implemented in Rust.")?;
+    m.add(py, "nsm_lib_init", py_fn!(py, nsm_lib_init_py()))?;
+    m.add(py, "nsm_lib_exit", py_fn!(py, nsm_lib_exit_py(fd: i32)))?;
+    m.add(py, "nsm_get_random", py_fn!(py, nsm_get_random_py(fd: i32, length: i32)))?;
+    m.add(py, "nsm_get_attestation_doc", py_fn!(py, nsm_get_attestation_doc_py(
+        fd: i32,
+        pub_key_data: PyBytes,
+        pub_key_len: u32,
+    )))?;
+    Ok(())
+});
+
+fn nsm_lib_init_py(_: Python) -> PyResult<i32> {
+    let out = nsm_init();
+    Ok(out)
+}
+
+fn nsm_lib_exit_py(_: Python, fd: i32) -> PyResult<i32> {
+    nsm_exit(fd);
+    Ok(0)
+}
+
+unsafe fn nsm_get_random_py(py: Python, fd: i32, length: i32) -> PyResult<PyBytes> {
+    let buf_len: &mut usize = &mut 0;
+
+    let mut buf = vec![0; length as usize];
+    let buf_ptr = buf.as_mut_ptr();
+    *buf_len = buf.len();
+
+    match nsm_process_request(fd, Request::GetRandom) {
+        Response::GetRandom { random } => {
+            *buf_len = std::cmp::min(*buf_len, random.len());
+            std::ptr::copy_nonoverlapping(random.as_ptr(), buf_ptr, *buf_len);
+            ErrorCode::Success
+        }
+        Response::Error(err) => err,
+        _ => ErrorCode::InvalidResponse,
+    };
+    Ok(PyBytes::new(py, &buf))
+}
+
+unsafe fn nsm_get_attestation_doc_py(
+    py: Python,
+    fd: i32,
+    pub_key_data: PyBytes,
+    pub_key_len: u32,
+) -> PyResult<PyBytes> {
+    let user_data: *const u8 = ptr::null();
+    let user_data_len = 0;
+    let nonce_data: *const u8 = ptr::null();
+    let nonce_len = 0;
+    let pub_key_data_rust = pub_key_data.data(py);
+    let pub_key_data_ptr = pub_key_data_rust.as_ptr();
+
+    let mut buffer = vec![0; 16 * 1024];
+    let att_doc_data = buffer.as_mut_ptr();
+    let att_doc_len: &mut u32 = &mut (16 * 1024);
+
+    let request = Request::Attestation {
+        user_data: get_byte_buf_from_user_data(user_data, user_data_len),
+        nonce: get_byte_buf_from_user_data(nonce_data, nonce_len),
+        public_key: get_byte_buf_from_user_data(pub_key_data_ptr, pub_key_len),
+    };
+
+    match nsm_process_request(fd, request) {
+        Response::Attestation {
+            document: attestation_doc,
+        } => nsm_get_raw_from_vec(&attestation_doc, att_doc_data, att_doc_len),
+        Response::Error(err) => err,
+        _ => ErrorCode::InvalidResponse,
+    };
+
+    Ok(PyBytes::new(py, &buffer[..(*att_doc_len as usize)]))
+}
 
 #[repr(C)]
 pub struct NsmDescription {

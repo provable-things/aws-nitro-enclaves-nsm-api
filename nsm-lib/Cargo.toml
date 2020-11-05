@@ -17,3 +17,8 @@ cbindgen = { version = "0.15", default-features = false }
 name = "nsm"
 path = "src/lib.rs"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies.cpython]
+version = "0.5"
+features = ["extension-module"]
+
