@@ -24,6 +24,8 @@ py_module_initializer!(libnsm, |py, m| {
         fd: i32,
         pub_key_data: PyBytes,
         pub_key_len: u32,
+        nonce_data: PyBytes,
+        nonce: u32
     )))?;
     Ok(())
 });
@@ -62,11 +64,13 @@ unsafe fn nsm_get_attestation_doc_py(
     fd: i32,
     pub_key_data: PyBytes,
     pub_key_len: u32,
+    nonce_data: PyBytes,
+    nonce_len: u32
 ) -> PyResult<PyBytes> {
     let user_data: *const u8 = ptr::null();
     let user_data_len = 0;
-    let nonce_data: *const u8 = ptr::null();
-    let nonce_len = 0;
+    let nonce_data_rust = nonce_data.data(py);
+    let nonce_data_ptr = nonce_data_rust.as_ptr();
     let pub_key_data_rust = pub_key_data.data(py);
     let pub_key_data_ptr = pub_key_data_rust.as_ptr();
 
@@ -76,7 +80,7 @@ unsafe fn nsm_get_attestation_doc_py(
 
     let request = Request::Attestation {
         user_data: get_byte_buf_from_user_data(user_data, user_data_len),
-        nonce: get_byte_buf_from_user_data(nonce_data, nonce_len),
+        nonce: get_byte_buf_from_user_data(nonce_data_ptr, nonce_len),
         public_key: get_byte_buf_from_user_data(pub_key_data_ptr, pub_key_len),
     };
 
